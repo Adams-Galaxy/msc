@@ -1,0 +1,78 @@
+Metadata-Version: 2.4
+Name: msc
+Version: 0.1.0
+Summary: Minecraft Server CLI (MSC)
+Author-email: Your Name <you@example.com>
+Keywords: minecraft,server,cli,typer
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: typer[all]<0.13,>=0.12
+Requires-Dist: pydantic<3,>=2.6
+Requires-Dist: pydantic-settings<3,>=2.3
+Requires-Dist: mcrcon>=0.7.0
+Requires-Dist: rich<14,>=13
+Requires-Dist: click<8.2,>=8.1.7
+
+# Minecraft Server CLI (msc)
+
+`msc` is a Typer-based command-line companion for running your self-hosted Minecraft server. It is designed to be installed via `pipx` and run directly inside a server directory (for now) so it can read local configuration and communicate with the running container.
+
+## Features (initial)
+
+- `msc status` – Summaries the Docker container's state, uptime, and metadata.
+- `msc server start|stop|restart` – Proxies lifecycle operations to `docker compose`.
+- `msc console run` – Sends a one-off RCON command.
+- `msc logs tail` – Tails `data/logs/latest.log` with optional follow mode.
+
+Additional modules (mods, backups, etc.) will be layered on incrementally.
+
+## Installation (current repo checkout)
+
+```bash
+pip install --upgrade pip
+pip install -e .
+```
+
+For pipx once published:
+
+```bash
+pipx install msc
+```
+
+### pipx (local editable checkout)
+
+While iterating locally, you can have `pipx` expose the CLI globally but still use your working tree:
+
+```bash
+pipx install --editable /home/minecraft/minecraft/msc
+```
+
+If the package is already installed, use `pipx reinstall --editable /home/minecraft/minecraft/msc` after making changes. The installed `msc` command will now reflect edits from your checkout as soon as they are saved.
+
+## Usage
+
+From your Minecraft server root (the same folder that contains `docker-compose.yml` and `.msc.json`):
+
+```bash
+msc status
+msc server start
+msc console run "say hello from msc"
+msc logs tail -f
+```
+
+## Configuration
+
+- `.msc.json` in the server root holds the persistent config (data dir, docker service, RCON details, etc.).
+- `.env` (optional) can override any setting using environment variables prefixed with `MSC_` (e.g., `MSC_RCON_PASSWORD`).
+- Defaults assume `data/logs/latest.log` for logs and `docker-compose.yml` defines a service named `minecraft`.
+
+## Development
+
+```bash
+python -m msc --help
+```
+
+Future enhancements: mods manifest management, backups, schedulers, diagnostics, and multi-profile support.

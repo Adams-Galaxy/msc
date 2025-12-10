@@ -1,0 +1,2 @@
+[console_scripts]
+msc = msc.cli:app

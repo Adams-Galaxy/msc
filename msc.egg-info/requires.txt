@@ -1,0 +1,6 @@
+typer[all]<0.13,>=0.12
+pydantic<3,>=2.6
+pydantic-settings<3,>=2.3
+mcrcon>=0.7.0
+rich<14,>=13
+click<8.2,>=8.1.7

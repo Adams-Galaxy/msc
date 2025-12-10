@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+msc/__init__.py
+msc/__main__.py
+msc/cli.py
+msc/config.py
+msc/console.py
+msc/logs.py
+msc/server.py
+msc.egg-info/PKG-INFO
+msc.egg-info/SOURCES.txt
+msc.egg-info/dependency_links.txt
+msc.egg-info/entry_points.txt
+msc.egg-info/requires.txt
+msc.egg-info/top_level.txt
