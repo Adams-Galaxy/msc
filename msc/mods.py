@@ -164,6 +164,7 @@ class ResolvedMod:
     version: Optional[str] = None
     loader: Optional[str] = None
     mc_version: Optional[str] = None
+    mc_versions: Optional[List[str]] = None
 
 
 class SourceResolver(Protocol):
@@ -203,6 +204,42 @@ def disabled_dir(cfg: MscConfig, manifest: Optional[ModManifest] = None) -> Path
 def ensure_directories(cfg: MscConfig, manifest: Optional[ModManifest] = None) -> None:
     mods_dir(cfg, manifest).mkdir(parents=True, exist_ok=True)
     disabled_dir(cfg, manifest).mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_version_list(value: Optional[Iterable[str] | str]) -> List[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    result = []
+    for item in value:
+        if item:
+            result.append(str(item))
+    return result
+
+
+def _assert_version_compatibility(
+    *,
+    mod_identifier: str,
+    resolved_loader: Optional[str],
+    resolved_mc_versions: List[str],
+    preferred_loader: Optional[str],
+    preferred_mc_version: Optional[str],
+) -> None:
+    if preferred_loader and resolved_loader:
+        if preferred_loader.lower() != resolved_loader.lower():
+            raise ManifestError(
+                f"{mod_identifier} targets loader '{resolved_loader}' which does not match the server loader '{preferred_loader}'."
+            )
+
+    if preferred_mc_version:
+        normalized_target = preferred_mc_version.lower()
+        normalized_supported = {version.lower() for version in resolved_mc_versions}
+        if resolved_mc_versions and normalized_target not in normalized_supported:
+            readable_supported = ", ".join(resolved_mc_versions)
+            raise ManifestError(
+                f"{mod_identifier} is tagged for Minecraft {readable_supported} but the server is {preferred_mc_version}."
+            )
 
 
 def load_manifest(cfg: MscConfig) -> ModManifest:
@@ -394,6 +431,14 @@ def add_mod(
             project_id=project_id,
         )
         resolved = resolver.resolve(request)
+        resolved_versions = _normalize_version_list(resolved.mc_versions or resolved.mc_version)
+        _assert_version_compatibility(
+            mod_identifier=mod_id or resolved.mod_id or normalized_source,
+            resolved_loader=resolved.loader,
+            resolved_mc_versions=resolved_versions,
+            preferred_loader=preferred_loader,
+            preferred_mc_version=preferred_mc_version,
+        )
         target_filename = resolved.filename
         hashes = resolved.hashes
         mod_source = resolved.source
@@ -463,6 +508,52 @@ def set_enabled(
     entry.enabled = enabled
     save_manifest(cfg, manifest)
     return entry
+
+
+def remove_mod(
+    cfg: MscConfig,
+    *,
+    manifest: ModManifest,
+    mod_id: str,
+    remove_files: bool = True,
+) -> tuple[ModEntry, List[Path]]:
+    """Remove a mod from the manifest and optionally delete its files."""
+
+    ensure_directories(cfg, manifest)
+    entry = manifest.find(mod_id)
+
+    deleted_files: List[Path] = []
+    if remove_files:
+        candidate_paths = [
+            mods_dir(cfg, manifest) / entry.filename,
+            disabled_dir(cfg, manifest) / entry.filename,
+        ]
+        for path in candidate_paths:
+            if path.exists():
+                path.unlink()
+                deleted_files.append(path)
+
+    manifest.remove(mod_id)
+    save_manifest(cfg, manifest)
+    return entry, deleted_files
+
+
+def purge_mods(
+    cfg: MscConfig,
+    *,
+    manifest: ModManifest,
+    remove_files: bool = True,
+) -> tuple[int, List[Path]]:
+    """Remove every mod from the manifest (optionally deleting files)."""
+
+    ensure_directories(cfg, manifest)
+    deleted: List[Path] = []
+    removed_count = 0
+    for entry in list(manifest.mods):
+        _, removed_paths = remove_mod(cfg, manifest=manifest, mod_id=entry.id, remove_files=remove_files)
+        removed_count += 1
+        deleted.extend(removed_paths)
+    return removed_count, deleted
 
 
 def _sha256(path: Path) -> str:
@@ -680,6 +771,7 @@ class ModrinthResolver(SourceResolver):
             version=version.get("version_number"),
             loader=_first_or_none(loaders) or request.preferred_loader,
             mc_version=_first_or_none(mc_versions) or request.preferred_mc_version,
+            mc_versions=mc_versions or None,
         )
 
     def _headers(self, request: SourceRequest) -> Dict[str, str]:
@@ -779,6 +871,7 @@ class CurseForgeResolver(SourceResolver):
             md5=self._extract_hash(file_data, algo=2),
             sha1=self._extract_hash(file_data, algo=1),
         )
+        mc_versions = file_data.get("gameVersions") or []
 
         return ResolvedMod(
             filename=filename,
@@ -795,7 +888,8 @@ class CurseForgeResolver(SourceResolver):
             name=request.suggested_name or project.get("name"),
             version=file_data.get("displayName") or file_data.get("fileName"),
             loader=request.preferred_loader,
-            mc_version=_first_or_none(file_data.get("gameVersions") or []),
+            mc_version=_first_or_none(mc_versions) or request.preferred_mc_version,
+            mc_versions=mc_versions or None,
         )
 
     def _headers(self, request: SourceRequest) -> Dict[str, str]:

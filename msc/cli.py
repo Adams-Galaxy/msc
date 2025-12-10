@@ -459,13 +459,75 @@ def mods_list(
         )
     _rich_console.print(table)
 
-    if include_extras and inv.extras:
+
+@mods_app.command("remove")
+def mods_remove(
+    ctx: typer.Context,
+    mod_id: str = typer.Argument(..., help="ID of the mod to remove"),
+    keep_file: bool = typer.Option(False, "--keep-file", help="Keep the existing jar on disk"),
+):
+    """Delete a manifest entry and optionally the associated files."""
+
+    cfg = _get_config(ctx)
+    try:
+        manifest = mods_module.load_manifest(cfg)
+        entry, deleted_files = mods_module.remove_mod(cfg, manifest=manifest, mod_id=mod_id, remove_files=not keep_file)
+    except ManifestError as exc:
+        _fail(str(exc))
+
+    typer.secho(f"Removed mod '{entry.id}'", fg="green")
+    if keep_file:
+        typer.secho("Kept jar file(s) on disk.", fg="cyan")
+    else:
+        if deleted_files:
+            typer.secho(f"Deleted {len(deleted_files)} file(s):", fg="yellow")
+            for path in deleted_files:
+                typer.secho(f" - {path}", fg="bright_black")
+        else:
+            typer.secho("No matching files were found to delete.", fg="yellow")
+
+
+@mods_app.command("validate")
+def mods_validate(ctx: typer.Context):
+    """Check manifest entries and filesystem state, exiting non-zero if issues exist."""
+
+    cfg = _get_config(ctx)
+    try:
+        manifest = mods_module.load_manifest(cfg)
+        inv = mods_module.inventory(cfg, manifest)
+    except ManifestError as exc:
+        _fail(str(exc))
+
+    issues = [entry for entry in inv.entries if entry.status != "ok"]
+    extras = inv.extras
+
+    if not issues and not extras:
+        typer.secho("All tracked mods look good!", fg="green")
+        return
+
+    if issues:
+        issue_table = Table(title="Tracked issues", box=box.SIMPLE)
+        issue_table.add_column("ID", style="cyan")
+        issue_table.add_column("Status", style="magenta")
+        issue_table.add_column("Details")
+        for status in issues:
+            detail = {
+                "missing": f"{status.entry.filename} not found",
+                "moved": f"Expected in {'mods' if status.entry.enabled else 'mods-disabled'}, found in {status.location or 'unknown'}",
+                "hash-mismatch": "SHA mismatch",
+            }.get(status.status, "Needs attention")
+            issue_table.add_row(status.entry.id, status.status, detail)
+        _rich_console.print(issue_table)
+
+    if extras:
         extra_table = Table(title="Untracked files", box=box.MINIMAL)
         extra_table.add_column("Filename")
         extra_table.add_column("Location")
-        for extra in inv.extras:
+        for extra in extras:
             extra_table.add_row(extra.filename, extra.location)
         _rich_console.print(extra_table)
+
+    _fail("Validation failed; resolve the issues above and re-run.", code=4)
 
 
 @mods_app.command("add")
@@ -510,6 +572,41 @@ def mods_add(
 
     state = "disabled" if disable else "enabled"
     typer.secho(f"Added mod {entry.id} ({state})", fg="green")
+
+
+@mods_app.command("purge")
+def mods_purge(
+    ctx: typer.Context,
+    force: bool = typer.Option(False, "--force", help="Allow while server is running"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip interactive confirmation"),
+    keep_files: bool = typer.Option(False, "--keep-files", help="Leave jars on disk"),
+):
+    """Remove all tracked mods from the manifest (optionally deleting files)."""
+
+    cfg = _get_config(ctx)
+    _ensure_server_stopped(cfg, force=force, action="purge mods")
+
+    if not yes:
+        confirmed = typer.confirm("This will remove ALL tracked mods. Continue?")
+        if not confirmed:
+            typer.secho("Purge aborted.", fg="yellow")
+            raise typer.Exit(code=0)
+
+    try:
+        manifest = mods_module.load_manifest(cfg)
+        removed_count, deleted_files = mods_module.purge_mods(
+            cfg,
+            manifest=manifest,
+            remove_files=not keep_files,
+        )
+    except ManifestError as exc:
+        _fail(str(exc))
+
+    typer.secho(f"Removed {removed_count} mod(s) from the manifest.", fg="yellow" if removed_count else "cyan")
+    if keep_files:
+        typer.secho("Kept all jars on disk.", fg="cyan")
+    else:
+        typer.secho(f"Deleted {len(deleted_files)} file(s).", fg="red" if deleted_files else "yellow")
 
 
 @mods_app.command("enable")

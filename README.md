@@ -53,6 +53,9 @@ msc mods init --adopt-existing
 msc mods add ./mods/lithium-fabric-mc1.21.1-0.12.0.jar --name "Lithium"
 msc mods disable lithium
 msc mods list
+msc mods remove lithium --keep-file
+msc mods validate
+msc mods purge --yes --keep-files
 msc mods add modrinth:lithium --loader fabric --mc-version 1.21.1
 MSC_CURSEFORGE_API_KEY=... msc mods add curseforge:sodium --source-type curseforge --loader fabric --mc-version 1.21.1
 msc logs tail -f
@@ -66,7 +69,11 @@ The mods tooling introduces a lightweight manifest stored at `data/mods/.mscmods
 - `msc mods status` summarizes drift between the manifest and filesystem (missing/misplaced files, hash mismatches, and untracked extras).
 - `msc mods list` shows every tracked mod, its enablement flag, and hash verification results.
 - `msc mods add <source>` copies in a local file or downloads from a URL, records metadata, and computes a SHA-256 hash. Use `--disable` to stage a mod without enabling it yet.
+- **Version safety:** when using remote sources (Modrinth/CurseForge), `msc mods add` refuses to install artifacts that don’t advertise compatibility with your manifest/server Minecraft version or loader, preventing accidental mismatches.
+- `msc mods remove <id>` drops the manifest entry (and deletes the jar unless you pass `--keep-file`).
 - `msc mods enable|disable <id>` toggles a mod, automatically moving files between `mods/` and `mods-disabled/` (unless `--no-move` is supplied).
+- `msc mods validate` audits the manifest/filesystem and exits with a non-zero status if anything is missing, misplaced, or untracked—great for CI checks.
+- `msc mods purge --yes` wipes every tracked entry (add `--keep-files` to leave jars untouched) so you can rebuild a manifest from scratch.
 - Remote sources:
 	- **Modrinth** – `msc mods add modrinth:<slug> --loader fabric --mc-version 1.21.1 --version <version-id>` resolves the latest compatible file, downloads it via the Modrinth API, stores hashes, and records the project/version IDs inside the manifest.
 	- **CurseForge** – `MSC_CURSEFORGE_API_KEY=... msc mods add curseforge:<slug> --loader fabric --mc-version 1.21.1` searches CurseForge (gameId 432) using the official Core API and downloads the selected file. Pass `--project-id` or `--version` to target a specific mod/file ID.
