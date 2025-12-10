@@ -13,6 +13,10 @@ DEFAULT_DATA_DIR = Path("data")
 DEFAULT_LOG_FILE = Path("data/logs/latest.log")
 DEFAULT_DOCKER_SERVICE = "minecraft"
 
+USER_CONFIG_DIR = Path.home() / ".config" / "msc"
+USER_CONFIG_FILENAME = "config.json"
+USER_CONFIG_PATH = USER_CONFIG_DIR / USER_CONFIG_FILENAME
+
 
 class ConfigError(RuntimeError):
     """Raised when configuration cannot be loaded."""
@@ -65,9 +69,43 @@ class MscConfig(BaseModel):
     curseforge_api_key: Optional[str] = None
 
 
+class UserConfig(BaseModel):
+    server_root: Optional[Path] = None
+
+
 def _coerce_path(base: Path, value: Path | str) -> Path:
     path = value if isinstance(value, Path) else Path(value)
     return path if path.is_absolute() else (base / path).resolve()
+
+
+def load_user_config() -> UserConfig:
+    if not USER_CONFIG_PATH.exists():
+        return UserConfig()
+    try:
+        data = json.loads(USER_CONFIG_PATH.read_text())
+    except json.JSONDecodeError as exc:  # pragma: no cover - config errors are user-facing
+        raise ConfigError(f"Invalid JSON in {USER_CONFIG_PATH}: {exc}") from exc
+    return UserConfig(**data)
+
+
+def save_user_config(cfg: UserConfig) -> Path:
+    USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    USER_CONFIG_PATH.write_text(cfg.model_dump_json(indent=2))
+    return USER_CONFIG_PATH
+
+
+def _resolve_initial_root(root: Path | None, user_cfg: UserConfig) -> Path:
+    if root is not None:
+        return Path(root).expanduser().resolve()
+
+    cwd = Path.cwd().resolve()
+    if (cwd / DEFAULT_CONFIG_FILENAME).exists():
+        return cwd
+
+    if user_cfg.server_root is not None:
+        return Path(user_cfg.server_root).expanduser().resolve()
+
+    return cwd
 
 
 def _load_file_config(path: Path) -> FileConfig:
@@ -85,7 +123,8 @@ def _load_file_config(path: Path) -> FileConfig:
 def load_config(root: Path | None = None) -> MscConfig:
     """Load configuration from env + .msc.json."""
 
-    server_root = Path(root or Path.cwd()).resolve()
+    user_cfg = load_user_config()
+    server_root = _resolve_initial_root(root, user_cfg)
     env_file = server_root / DEFAULT_ENV_FILENAME
     env_settings = EnvSettings(
         _env_file=env_file if env_file.exists() else None,

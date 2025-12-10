@@ -13,7 +13,15 @@ from . import console as console_module
 from . import mods as mods_module
 from . import logs as logs_module
 from . import server as server_module
-from .config import ConfigError, MscConfig, load_config
+from .config import (
+    DEFAULT_CONFIG_FILENAME,
+    ConfigError,
+    MscConfig,
+    USER_CONFIG_PATH,
+    load_config,
+    load_user_config,
+    save_user_config,
+)
 from .mods import ManifestError
 
 app = typer.Typer(help="Minecraft Server CLI (msc)")
@@ -22,12 +30,14 @@ logs_app = typer.Typer(help="Inspect Minecraft server logs")
 server_app = typer.Typer(help="Control server lifecycle via docker compose")
 quick_app = typer.Typer(help="Handy shortcuts for common server commands")
 mods_app = typer.Typer(help="Manage server mods and manifest entries")
+user_config_app = typer.Typer(help="Manage user-level defaults")
 
 app.add_typer(console_app, name="console")
 app.add_typer(logs_app, name="logs")
 app.add_typer(server_app, name="server")
 app.add_typer(quick_app, name="quick")
 app.add_typer(mods_app, name="mods")
+app.add_typer(user_config_app, name="config")
 
 _rich_console = Console()
 
@@ -52,6 +62,55 @@ def _get_config(ctx: typer.Context) -> MscConfig:
         cfg = _load_or_exit()
         ctx.obj["config"] = cfg
     return cfg
+
+
+def _load_user_config_or_exit():
+    try:
+        return load_user_config()
+    except ConfigError as exc:
+        _fail(str(exc), code=2)
+
+
+@user_config_app.command("show")
+def user_config_show():
+    """Display the user-level defaults stored under ~/.config."""
+    cfg = _load_user_config_or_exit()
+    table = Table(title="User config", box=box.MINIMAL_DOUBLE_HEAD)
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Server root", str(cfg.server_root) if cfg.server_root else "(not set)")
+    table.add_row("File", str(USER_CONFIG_PATH))
+    _rich_console.print(table)
+
+
+@user_config_app.command("set-root")
+def user_config_set_root(
+    path: Path = typer.Argument(..., help="Path to your Minecraft server root (contains .msc.json)"),
+):
+    resolved = path.expanduser().resolve()
+    if not resolved.exists():
+        _fail(f"{resolved} does not exist.")
+    if not resolved.is_dir():
+        _fail(f"{resolved} is not a directory.")
+    config_file = resolved / DEFAULT_CONFIG_FILENAME
+    if not config_file.exists():
+        typer.secho(
+            f"Warning: {config_file} does not exist yet. Commands may fail until it's created.",
+            fg="yellow",
+        )
+    cfg = _load_user_config_or_exit()
+    cfg.server_root = resolved
+    save_user_config(cfg)
+    typer.secho(f"Default server root set to {resolved}", fg="green")
+    typer.secho(f"Saved to {USER_CONFIG_PATH}", fg="cyan")
+
+
+@user_config_app.command("clear-root")
+def user_config_clear_root():
+    cfg = _load_user_config_or_exit()
+    cfg.server_root = None
+    save_user_config(cfg)
+    typer.secho("Cleared stored server root.", fg="yellow")
 
 
 @app.callback()

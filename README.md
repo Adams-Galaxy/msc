@@ -1,6 +1,6 @@
 # Minecraft Server CLI (msc)
 
-`msc` is a Typer-based command-line companion for running your self-hosted Minecraft server. It is designed to be installed via `pipx` and run directly inside a server directory (for now) so it can read local configuration and communicate with the running container.
+`msc` is a Typer-based command-line companion for running your self-hosted Minecraft server. It is designed to be installed via `pipx` and run directly inside a server directory (or from anywhere if you set a user-level default) so it can read local configuration and communicate with the running container.
 
 ## Features (initial)
 
@@ -81,6 +81,7 @@ For the architectural roadmap (Modrinth/CurseForge integration, curated modpacks
 - Defaults assume `data/logs/latest.log` for logs and `docker-compose.yml` defines a service named `minecraft`.
 - `curseforge_api_key` (or `MSC_CURSEFORGE_API_KEY`) powers CurseForge API downloads.
 - `api_user_agent` (or `MSC_API_USER_AGENT`) customizes the User-Agent header sent to Modrinth/CurseForge; defaults to `msc-cli/dev`.
+- `~/.config/msc/config.json` stores user-level defaults such as `server_root`. Use `msc config set-root /path/to/server` to set it once and run `msc` from anywhere; `msc config show` displays the current values and `msc config clear-root` removes them.
 
 ## Development
 
