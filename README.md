@@ -56,6 +56,7 @@ msc mods list
 msc mods remove lithium --keep-file
 msc mods validate
 msc mods purge --yes --keep-files
+msc mods repair --adopt-extras --fix-placement --apply
 msc mods add modrinth:lithium --loader fabric --mc-version 1.21.1
 MSC_CURSEFORGE_API_KEY=... msc mods add curseforge:sodium --source-type curseforge --loader fabric --mc-version 1.21.1
 msc logs tail -f
@@ -68,12 +69,13 @@ The mods tooling introduces a lightweight manifest stored at `data/mods/.mscmods
 - `msc mods init` scaffolds the manifest and directories. Pass `--adopt-existing` to ingest currently installed `.jar`/`.zip` files.
 - `msc mods status` summarizes drift between the manifest and filesystem (missing/misplaced files, hash mismatches, and untracked extras).
 - `msc mods list` shows every tracked mod, its enablement flag, and hash verification results.
-- `msc mods add <source>` copies in a local file or downloads from a URL, records metadata, and computes a SHA-256 hash. Use `--disable` to stage a mod without enabling it yet.
+- `msc mods add <source>` copies in a local file or downloads from a URL, records metadata, and computes a SHA-256 hash. Use `--disable` to stage a mod without enabling it yet. Remote sources automatically filter for the correct loader + Minecraft version so you don't accidentally install the wrong build.
 - **Version safety:** when using remote sources (Modrinth/CurseForge), `msc mods add` refuses to install artifacts that don’t advertise compatibility with your manifest/server Minecraft version or loader, preventing accidental mismatches.
 - `msc mods remove <id>` drops the manifest entry (and deletes the jar unless you pass `--keep-file`).
 - `msc mods enable|disable <id>` toggles a mod, automatically moving files between `mods/` and `mods-disabled/` (unless `--no-move` is supplied).
 - `msc mods validate` audits the manifest/filesystem and exits with a non-zero status if anything is missing, misplaced, or untracked—great for CI checks.
 - `msc mods purge --yes` wipes every tracked entry (add `--keep-files` to leave jars untouched) so you can rebuild a manifest from scratch.
+- `msc mods repair` provides targeted fixes: `--adopt-extras` to track stray jars, `--remove-missing` to prune orphaned manifest entries, `--fix-placement` to move jars into the correct directories, and `--recompute-hashes` to refresh checksums. It runs as a dry run by default; add `--apply` to persist changes.
 - Remote sources:
 	- **Modrinth** – `msc mods add modrinth:<slug> --loader fabric --mc-version 1.21.1 --version <version-id>` resolves the latest compatible file, downloads it via the Modrinth API, stores hashes, and records the project/version IDs inside the manifest.
 	- **CurseForge** – `MSC_CURSEFORGE_API_KEY=... msc mods add curseforge:<slug> --loader fabric --mc-version 1.21.1` searches CurseForge (gameId 432) using the official Core API and downloads the selected file. Pass `--project-id` or `--version` to target a specific mod/file ID.

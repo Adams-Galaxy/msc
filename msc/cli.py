@@ -607,6 +607,49 @@ def mods_purge(
         typer.secho("Kept all jars on disk.", fg="cyan")
     else:
         typer.secho(f"Deleted {len(deleted_files)} file(s).", fg="red" if deleted_files else "yellow")
+@mods_app.command("repair")
+def mods_repair(
+    ctx: typer.Context,
+    adopt_extras: bool = typer.Option(False, "--adopt-extras", help="Add untracked jars to the manifest"),
+    remove_missing: bool = typer.Option(False, "--remove-missing", help="Drop manifest entries whose files are gone"),
+    fix_locations: bool = typer.Option(False, "--fix-placement", help="Move jars into the correct directory"),
+    recompute_hashes: bool = typer.Option(False, "--recompute-hashes", help="Refresh hashes for present files"),
+    apply_changes: bool = typer.Option(False, "--apply", help="Write changes instead of dry run"),
+):
+    """Detect and optionally repair manifest/filesystem drift."""
+
+    if not any([adopt_extras, remove_missing, fix_locations, recompute_hashes]):
+        typer.secho("No repair actions selected; running in report-only mode.", fg="yellow")
+
+    cfg = _get_config(ctx)
+    try:
+        manifest = mods_module.load_manifest(cfg)
+        summary = mods_module.repair_manifest(
+            cfg,
+            manifest=manifest,
+            adopt_extras=adopt_extras,
+            remove_missing=remove_missing,
+            fix_locations=fix_locations,
+            recompute_hashes=recompute_hashes,
+            dry_run=not apply_changes,
+        )
+    except ManifestError as exc:
+        _fail(str(exc))
+
+    table = Table(title="Repair summary", box=box.SIMPLE)
+    table.add_column("Action")
+    table.add_column("Count", justify="right")
+    table.add_row("Extras detected", str(summary.extras_found))
+    table.add_row("Missing entries", str(summary.missing_found))
+    table.add_row("Adopted", str(summary.adopted))
+    table.add_row("Removed", str(summary.removed))
+    table.add_row("Moved", str(summary.moved))
+    table.add_row("Hashes updated", str(summary.hashes_updated))
+    table.add_row("Mode", "applied" if apply_changes else "dry-run")
+    _rich_console.print(table)
+
+    if not apply_changes and any([adopt_extras, remove_missing, fix_locations, recompute_hashes]):
+        typer.secho("Dry run only. Re-run with --apply to persist the fixes.", fg="cyan")
 
 
 @mods_app.command("enable")

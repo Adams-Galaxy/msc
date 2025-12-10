@@ -167,6 +167,18 @@ class ResolvedMod:
     mc_versions: Optional[List[str]] = None
 
 
+@dataclass
+class RepairSummary:
+    adopted: int = 0
+    removed: int = 0
+    moved: int = 0
+    hashes_updated: int = 0
+    extras_found: int = 0
+    missing_found: int = 0
+    changed: bool = False
+    dry_run: bool = True
+
+
 class SourceResolver(Protocol):
     def resolve(self, request: SourceRequest) -> ResolvedMod:  # pragma: no cover - protocol
         ...
@@ -232,14 +244,36 @@ def _assert_version_compatibility(
                 f"{mod_identifier} targets loader '{resolved_loader}' which does not match the server loader '{preferred_loader}'."
             )
 
-    if preferred_mc_version:
+    if preferred_mc_version and resolved_mc_versions:
         normalized_target = preferred_mc_version.lower()
         normalized_supported = {version.lower() for version in resolved_mc_versions}
-        if resolved_mc_versions and normalized_target not in normalized_supported:
+        if normalized_target not in normalized_supported:
             readable_supported = ", ".join(resolved_mc_versions)
             raise ManifestError(
-                f"{mod_identifier} is tagged for Minecraft {readable_supported} but the server is {preferred_mc_version}."
+                f"No compatible Minecraft {preferred_mc_version} release for {mod_identifier}. Available tags: {readable_supported}."
             )
+
+
+def _entry_path(cfg: MscConfig, manifest: ModManifest, entry: ModEntry, location: Optional[str] = None) -> Path:
+    target_location = location or ("mods" if entry.enabled else "mods-disabled")
+    if target_location == "mods":
+        return mods_dir(cfg, manifest) / entry.filename
+    return disabled_dir(cfg, manifest) / entry.filename
+
+
+def _entry_from_mod_file(cfg: MscConfig, manifest: ModManifest, file: ModFile) -> ModEntry:
+    sha = file.sha256 or _sha256(file.path)
+    return ModEntry(
+        id=_derive_mod_id(file.filename),
+        name=Path(file.filename).stem,
+        filename=file.filename,
+        enabled=file.location == "mods",
+        loader=manifest.loader,
+        mc_version=manifest.minecraft_version,
+        installed_at=_now_iso(),
+        source=ModSource(type=ModSourceType.LOCAL.value, path=str(file.path)),
+        hashes=ModHashes(sha256=sha),
+    )
 
 
 def load_manifest(cfg: MscConfig) -> ModManifest:
@@ -538,6 +572,82 @@ def remove_mod(
     return entry, deleted_files
 
 
+def repair_manifest(
+    cfg: MscConfig,
+    *,
+    manifest: ModManifest,
+    adopt_extras: bool = False,
+    remove_missing: bool = False,
+    fix_locations: bool = False,
+    recompute_hashes: bool = False,
+    dry_run: bool = True,
+) -> RepairSummary:
+    ensure_directories(cfg, manifest)
+    inv = inventory(cfg, manifest)
+
+    summary = RepairSummary(
+        extras_found=len(inv.extras),
+        missing_found=sum(1 for entry in inv.entries if entry.status == "missing"),
+        dry_run=dry_run,
+    )
+
+    changed = False
+
+    if adopt_extras and inv.extras:
+        for extra in inv.extras:
+            entry = _entry_from_mod_file(cfg, manifest, extra)
+            if any(existing.id == entry.id for existing in manifest.mods):
+                continue
+            summary.adopted += 1
+            if not dry_run:
+                manifest.add(entry)
+                changed = True
+
+    if remove_missing:
+        for status in inv.entries:
+            if status.status == "missing":
+                summary.removed += 1
+                if not dry_run:
+                    manifest.remove(status.entry.id)
+                    changed = True
+
+    if fix_locations:
+        for status in inv.entries:
+            if status.status != "moved" or not status.location:
+                continue
+            src_path = _entry_path(cfg, manifest, status.entry, status.location)
+            dst_path = _entry_path(cfg, manifest, status.entry)
+            if not src_path.exists():
+                continue
+            summary.moved += 1
+            if not dry_run:
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src_path), str(dst_path))
+
+    if recompute_hashes:
+        for status in inv.entries:
+            if not status.present:
+                continue
+            file_path = _entry_path(cfg, manifest, status.entry, status.location)
+            if not file_path.exists():
+                continue
+            new_hash = _sha256(file_path)
+            current_hash = status.entry.hashes.sha256 if status.entry.hashes else None
+            if current_hash == new_hash:
+                continue
+            summary.hashes_updated += 1
+            if not dry_run:
+                status.entry.hashes = status.entry.hashes or ModHashes()
+                status.entry.hashes.sha256 = new_hash
+                changed = True
+
+    if changed and not dry_run:
+        save_manifest(cfg, manifest)
+
+    summary.changed = changed and not dry_run
+    return summary
+
+
 def purge_mods(
     cfg: MscConfig,
     *,
@@ -794,6 +904,12 @@ class ModrinthResolver(SourceResolver):
         if hint:
             version = self._fetch_version_by_hint(hint, headers)
             if version and version.get("project_id") == project.get("id"):
+                if request.preferred_mc_version:
+                    mc_versions = version.get("game_versions") or []
+                    if request.preferred_mc_version not in mc_versions:
+                        raise ManifestError(
+                            f"Version {hint} for {project.get('slug') or project.get('id')} does not target Minecraft {request.preferred_mc_version}."
+                        )
                 return version
 
         params: Dict[str, Any] = {}
@@ -807,6 +923,16 @@ class ModrinthResolver(SourceResolver):
         versions = _http_get_json(url, headers=headers)
         if not versions:
             raise ManifestError("No Modrinth versions matched the requested filters.")
+
+        if request.preferred_mc_version:
+            filtered = [
+                version for version in versions if request.preferred_mc_version in (version.get("game_versions") or [])
+            ]
+            if not filtered:
+                raise ManifestError(
+                    f"No Modrinth releases for {project.get('slug') or project.get('id')} target Minecraft {request.preferred_mc_version}."
+                )
+            versions = filtered
 
         if hint:
             for version in versions:
@@ -943,6 +1069,16 @@ class CurseForgeResolver(SourceResolver):
         files = data.get("data") or []
         if not files:
             raise ManifestError("No CurseForge files matched the requested filters.")
+
+        if request.preferred_mc_version:
+            filtered = [
+                file for file in files if request.preferred_mc_version in (file.get("gameVersions") or [])
+            ]
+            if not filtered:
+                raise ManifestError(
+                    f"No CurseForge files for project {project_id} target Minecraft {request.preferred_mc_version}."
+                )
+            files = filtered
         return files
 
     def _select_file(self, files: List[Dict[str, Any]], version_hint: Optional[str]) -> Dict[str, Any]:
